@@ -20,5 +20,6 @@ export type SSEEvent =
   | { type: "text_delta"; payload: string }
   | { type: "tool_call"; payload: { id: string; name: string; args: unknown } }
   | { type: "tool_result"; payload: { id: string; name: string; result: unknown } }
+  | { type: "notice"; payload: string } // non-fatal (e.g. rate-limit backoff)
   | { type: "done"; payload: null }
   | { type: "error"; payload: string };

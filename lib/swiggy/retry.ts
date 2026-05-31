@@ -5,6 +5,10 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export function statusOf(err: unknown): number | undefined {
+  return getStatus(err);
+}
+
 function getStatus(err: any): number | undefined {
   const s = err?.status ?? err?.statusCode ?? err?.response?.status;
   if (typeof s === "number") return s;

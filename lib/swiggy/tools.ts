@@ -25,6 +25,17 @@ export function mcpToolToGroqTool(tool: MCPTool): ChatCompletionTool {
 
 const SERVERS: SwiggyServer[] = ["food", "instamart", "dineout"];
 
+// Only enabled servers' tools enter the Groq context. Fewer tools = far fewer input
+// tokens per request — important on Groq's free tier (8b TPM is only 6,000). Set
+// SWIGGY_ENABLED_SERVERS="food" for the lean food slice, or list several / omit for all.
+function enabledServers(): SwiggyServer[] {
+  const raw = process.env.SWIGGY_ENABLED_SERVERS;
+  if (!raw || !raw.trim()) return SERVERS;
+  const wanted = new Set(raw.split(",").map((s) => s.trim().toLowerCase()));
+  const list = SERVERS.filter((s) => wanted.has(s));
+  return list.length ? list : SERVERS;
+}
+
 let cached: LoadedTools | null = null;
 
 export async function loadAllGroqTools(clients: SwiggyMCPClients): Promise<LoadedTools> {
@@ -33,7 +44,7 @@ export async function loadAllGroqTools(clients: SwiggyMCPClients): Promise<Loade
   const tools: ChatCompletionTool[] = [];
   const toolServerMap = new Map<string, SwiggyServer>();
 
-  for (const server of SERVERS) {
+  for (const server of enabledServers()) {
     const { tools: mcpTools } = await clients[server].listTools();
     for (const tool of mcpTools) {
       if (toolServerMap.has(tool.name)) {

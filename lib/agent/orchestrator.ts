@@ -7,12 +7,16 @@
 
 import Groq from "groq-sdk";
 import type {
+  ChatCompletionChunk,
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from "groq-sdk/resources/chat/completions";
 import type { ChatMessage, SSEEvent } from "@/types/agent";
-import { withRetry } from "@/lib/swiggy/retry";
+import { isRetryable, handle429, statusOf, sleep } from "@/lib/swiggy/retry";
 import type { CallMCPTool } from "./guards";
+
+const MAX_CREATE_ATTEMPTS = 4;
+const MAX_429_WAIT_MS = 12000;
 
 const MAX_ROUNDS = 8;
 
@@ -66,10 +70,11 @@ export async function* runAgentStream(
   for (let round = 0; round < MAX_ROUNDS; round++) {
     const forceText = round === MAX_ROUNDS - 1;
 
-    let stream;
-    try {
-      stream = await withRetry(() =>
-        groq.chat.completions.create({
+    // Inline retry so we can yield a notice during 429 backoff (no silent hang).
+    let stream: AsyncIterable<ChatCompletionChunk> | undefined;
+    for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt++) {
+      try {
+        stream = (await groq.chat.completions.create({
           model,
           messages,
           tools,
@@ -77,10 +82,22 @@ export async function* runAgentStream(
           temperature: 0.2, // low temp → reliable tool selection, fewer malformed tool calls
           max_tokens: 4096,
           stream: true,
-        })
-      );
-    } catch (err) {
-      yield { type: "error", payload: describeError(err) };
+        })) as unknown as AsyncIterable<ChatCompletionChunk>;
+        break;
+      } catch (err) {
+        const last = attempt === MAX_CREATE_ATTEMPTS - 1;
+        if (!isRetryable(err) || last) {
+          yield { type: "error", payload: describeError(err) };
+          return;
+        }
+        const waitMs =
+          statusOf(err) === 429 ? Math.min(handle429(err), MAX_429_WAIT_MS) : 600 * (attempt + 1);
+        yield { type: "notice", payload: `Rate limited — retrying in ${Math.ceil(waitMs / 1000)}s…` };
+        await sleep(waitMs);
+      }
+    }
+    if (!stream) {
+      yield { type: "error", payload: "Failed to start completion stream." };
       return;
     }
 

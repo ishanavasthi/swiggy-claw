@@ -46,6 +46,9 @@ export default function Home() {
         case "tool_result":
           resolveToolCall(e.payload.id, e.payload.result);
           break;
+        case "notice":
+          toast.message(e.payload);
+          break;
         case "error":
           toast.error(e.payload);
           break;
