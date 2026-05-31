@@ -1,4 +1,4 @@
-# Swiggy Claw — AI Ordering Agent
+# Swiggy Claw - AI Ordering Agent
 
 Natural-language agent for food ordering, groceries, and table booking via Swiggy's MCP
 platform, with **Groq** as the LLM. Next.js 16 (App Router) + `groq-sdk` (OpenAI-compatible
@@ -13,19 +13,19 @@ behind the same interface if/when invited access is granted.
 
 ```bash
 npm install
-# .env.local already has placeholders — set GROQ_API_KEY (free: https://console.groq.com)
+# .env.local already has placeholders - set GROQ_API_KEY (free: https://console.groq.com)
 npm run dev          # http://localhost:3000
 ```
 
 `.env.local` keys:
 
-| Var | Purpose |
-|---|---|
-| `GROQ_API_KEY` | Groq key (required for live turns) |
-| `GROQ_MODEL_TOOLS` | `llama-3.3-70b-versatile` (reliable tool calling) |
-| `SWIGGY_USE_MOCK` | `true` (default). `false` needs invited Swiggy creds |
+| Var                      | Purpose                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| `GROQ_API_KEY`           | Groq key (required for live turns)                                                |
+| `GROQ_MODEL_TOOLS`       | `llama-3.3-70b-versatile` (reliable tool calling)                                 |
+| `SWIGGY_USE_MOCK`        | `true` (default). `false` needs invited Swiggy creds                              |
 | `SWIGGY_ENABLED_SERVERS` | `food` (lean) … omit for all 3. Controls how many tool schemas enter each request |
-| `SESSION_SECRET` | 64-char hex for iron-session |
+| `SESSION_SECRET`         | 64-char hex for iron-session                                                      |
 
 ## ⚠️ Groq free-tier reality (important)
 
@@ -34,7 +34,7 @@ Each agent turn sends **all enabled tool schemas** in every request. Full 3-serv
 
 - **`llama-3.3-70b-versatile`**: 30 RPM / 12k TPM / **100k tokens-per-DAY**. ≈14 full turns/day
   before the daily token cap → 1h+ reset. This is the binding limit, not RPM.
-- **`llama-3.1-8b-instant`**: 6k TPM — a single full request is **too large** (413) and 8b is
+- **`llama-3.1-8b-instant`**: 6k TPM - a single full request is **too large** (413) and 8b is
   weaker at tool calls. Not recommended for this agent on free tier.
 
 Levers: keep `SWIGGY_ENABLED_SERVERS=food` for the slice, or upgrade to Groq's Dev tier.

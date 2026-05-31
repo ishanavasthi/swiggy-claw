@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Swiggy Claw — AI Ordering Agent",
+  title: "Swiggy Claw - AI Ordering Agent",
   description: "Order food, buy groceries, and book tables by chat.",
 };
 

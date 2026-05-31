@@ -25,7 +25,7 @@ export function ChatWindow() {
       <div className="mx-auto flex max-w-2xl flex-col gap-4">
         {empty && (
           <div className="mt-24 text-center text-muted-foreground">
-            <p className="text-lg font-medium">Order food, buy groceries, or book a table — just ask.</p>
+            <p className="text-lg font-medium">Order food, buy groceries, or book a table - just ask.</p>
             <p className="mt-2 text-sm">Try: “Order one chicken biryani to my Home address.”</p>
           </div>
         )}
