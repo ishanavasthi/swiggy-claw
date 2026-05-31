@@ -68,7 +68,7 @@ export const MOCK_TOOLS: MockTool[] = [
   {
     name: "search_restaurants",
     server: "food",
-    description: "Find OPEN restaurants for food DELIVERY by query and delivery addressId. Not for table booking.",
+    description: "FOOD DELIVERY ONLY. Find OPEN restaurants to order food for delivery, by query + delivery addressId. This is the tool to use whenever the user wants to ORDER/EAT food. Do NOT use search_restaurants_dineout for delivery.",
     inputSchema: {
       type: "object",
       properties: {
@@ -399,7 +399,7 @@ export const MOCK_TOOLS: MockTool[] = [
   {
     name: "search_restaurants_dineout",
     server: "dineout",
-    description: "Find dine-in restaurants near lat/lng for TABLE BOOKING (not delivery). Never pass an addressId here.",
+    description: "TABLE BOOKING ONLY (dine-in reservations). Use ONLY when the user wants to BOOK A TABLE / reserve seats at a restaurant to eat there. NEVER use this to order food for delivery — use search_restaurants for that. Takes lat/lng, never an addressId.",
     inputSchema: {
       type: "object",
       properties: {

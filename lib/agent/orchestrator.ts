@@ -16,6 +16,14 @@ import type { CallMCPTool } from "./guards";
 
 const MAX_ROUNDS = 8;
 
+function describeError(err: any): string {
+  const fg = err?.error?.error?.failed_generation ?? err?.error?.failed_generation;
+  const msg = err instanceof Error ? err.message : String(err);
+  if (fg) return `${msg} :: failed_generation=${typeof fg === "string" ? fg : JSON.stringify(fg)}`;
+  if (err?.error) return `${msg} :: ${JSON.stringify(err.error).slice(0, 800)}`;
+  return msg;
+}
+
 interface AccumulatedCall {
   id: string;
   name: string;
@@ -66,12 +74,13 @@ export async function* runAgentStream(
           messages,
           tools,
           tool_choice: forceText ? "none" : "auto",
+          temperature: 0.2, // low temp → reliable tool selection, fewer malformed tool calls
           max_tokens: 4096,
           stream: true,
         })
       );
     } catch (err) {
-      yield { type: "error", payload: err instanceof Error ? err.message : String(err) };
+      yield { type: "error", payload: describeError(err) };
       return;
     }
 
@@ -99,7 +108,7 @@ export async function* runAgentStream(
         }
       }
     } catch (err) {
-      yield { type: "error", payload: err instanceof Error ? err.message : String(err) };
+      yield { type: "error", payload: describeError(err) };
       return;
     }
 

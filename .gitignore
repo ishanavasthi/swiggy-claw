@@ -43,3 +43,4 @@ next-env.d.ts
 # Agent Files
 CLAUDE.md
 AGENTS.md
+.devserver.log
