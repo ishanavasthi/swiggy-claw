@@ -3,7 +3,7 @@
 // so it passes through verbatim — no translation layer.
 
 import type { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
-import type { ChatCompletionTool } from "groq-sdk/resources/chat/completions";
+import type { ChatCompletionTool } from "openai/resources/chat/completions";
 import type { SwiggyServer } from "@/types/agent";
 import type { SwiggyMCPClients } from "./mcp-client";
 

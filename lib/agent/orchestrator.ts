@@ -5,12 +5,12 @@
 //  - the streamed assistant text is stored verbatim, so history == what the user saw
 //  - assistant/tool messages stay 1:1 paired; round count is capped
 
-import Groq from "groq-sdk";
 import type {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
   ChatCompletionTool,
-} from "groq-sdk/resources/chat/completions";
+} from "openai/resources/chat/completions";
+import { createLLMClient, resolveModel } from "./provider";
 import type { ChatMessage, SSEEvent } from "@/types/agent";
 import { isRetryable, handle429, statusOf, sleep } from "@/lib/swiggy/retry";
 import type { CallMCPTool } from "./guards";
@@ -58,8 +58,8 @@ export async function* runAgentStream(
   callMCPTool: CallMCPTool,
   systemPrompt: string
 ): AsyncGenerator<SSEEvent> {
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-  const model = process.env.GROQ_MODEL_TOOLS ?? "llama-3.3-70b-versatile";
+  const llm = createLLMClient();
+  const model = resolveModel();
 
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -74,7 +74,7 @@ export async function* runAgentStream(
     let stream: AsyncIterable<ChatCompletionChunk> | undefined;
     for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt++) {
       try {
-        stream = (await groq.chat.completions.create({
+        stream = (await llm.chat.completions.create({
           model,
           messages,
           tools,

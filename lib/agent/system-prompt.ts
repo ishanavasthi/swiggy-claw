@@ -1,3 +1,5 @@
+import type { AgentMode } from "@/types/agent";
+
 export const SYSTEM_PROMPT = `You are Swiggy Assistant — an AI agent that helps users order food, buy groceries,
 and book restaurant tables across India using Swiggy.
 
@@ -39,3 +41,18 @@ and book restaurant tables across India using Swiggy.
 - Restaurant list: markdown table (name, rating, distance, delivery time).
 - Cart: markdown table (item, qty, unit price, line total) plus subtotal, delivery fee, total.
 - Be concise. Use shortDescription in lists, longDescription only for item detail.`;
+
+// One steering line per UI surface. Additive only — the core rules above still win.
+const MODE_STEER: Record<AgentMode, string> = {
+  food: "## Active Surface\nThe user is on the FOOD DELIVERY tab — prefer the Food tools (get_addresses, search_restaurants, update_food_cart, place_food_order) unless they clearly ask for groceries or a table.",
+  groceries:
+    "## Active Surface\nThe user is on the GROCERIES tab — prefer the Instamart tools (get_addresses_im, your_go_to_items, search_products, update_cart, checkout) unless they clearly ask for restaurant delivery or a table.",
+  dineout:
+    "## Active Surface\nThe user is on the DINE OUT tab — prefer the Dineout tools (get_saved_locations, search_restaurants_dineout, get_available_slots, book_table) unless they clearly ask for delivery or groceries.",
+};
+
+/** SYSTEM_PROMPT plus an optional surface hint. Unknown modes are ignored. */
+export function composeSystemPrompt(mode?: string | null): string {
+  const steer = mode ? MODE_STEER[mode as AgentMode] : undefined;
+  return steer ? `${SYSTEM_PROMPT}\n\n${steer}` : SYSTEM_PROMPT;
+}

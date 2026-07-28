@@ -8,7 +8,7 @@ import { getClients } from "@/lib/swiggy/mcp-client";
 import { loadAllGroqTools } from "@/lib/swiggy/tools";
 import { buildCallMCPTool } from "@/lib/agent/guards";
 import { runAgentStream, buildHistoryFromMessages } from "@/lib/agent/orchestrator";
-import { SYSTEM_PROMPT } from "@/lib/agent/system-prompt";
+import { composeSystemPrompt } from "@/lib/agent/system-prompt";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +16,8 @@ export const dynamic = "force-dynamic";
 interface ChatBody {
   messages?: ChatMessage[];
   userMessage?: string;
+  /** UI surface the user is on ("food" | "groceries" | "dineout"). */
+  mode?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -35,6 +37,7 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: "userMessage is required" }, { status: 400 });
   }
   const history = buildHistoryFromMessages(body.messages ?? []);
+  const systemPrompt = composeSystemPrompt(body.mode);
 
   const clients = await getClients(token);
   const { tools, toolServerMap } = await loadAllGroqTools(clients);
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const event of runAgentStream(userMessage, history, tools, callMCPTool, SYSTEM_PROMPT)) {
+        for await (const event of runAgentStream(userMessage, history, tools, callMCPTool, systemPrompt)) {
           send(controller, event);
         }
       } catch (err) {
