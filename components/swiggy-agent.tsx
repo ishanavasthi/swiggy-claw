@@ -30,9 +30,15 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { useChatStore } from '@/store/chat'
+import { conversationTitle, useChatStore } from '@/store/chat'
 import { streamChat } from '@/lib/chat-client'
-import type { AgentMode, ChatMessage, TimelineItem, TimelineTool } from '@/types/agent'
+import type {
+  AgentMode,
+  ChatMessage,
+  Conversation,
+  TimelineItem,
+  TimelineTool,
+} from '@/types/agent'
 
 /* ----------------------------------------------------------------------------
  * Static config (prompts & copy only — every piece of conversation data is real)
@@ -437,18 +443,23 @@ function BrandFooter() {
  * Sidebar
  * ------------------------------------------------------------------------- */
 
+/** One row in the Recent list = one conversation, not one message. */
 interface RecentEntry {
-  key: string
+  id: string
   title: string
   time: string
+  turns: number
+  active: boolean
 }
 
 function SidebarContent({
   recent,
   onAction,
+  onSelectConversation,
 }: {
   recent: RecentEntry[]
   onAction: (prompt: string) => void
+  onSelectConversation: (id: string) => void
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -487,20 +498,41 @@ function SidebarContent({
         </h2>
         {recent.length === 0 ? (
           <p className="px-2 text-xs leading-relaxed text-text-secondary">
-            Your recent asks show up here.
+            Your conversations show up here.
           </p>
         ) : (
           <div className="flex flex-col gap-1">
             {recent.map((r) => (
               <button
-                key={r.key}
+                key={r.id}
                 type="button"
-                aria-label={`Reuse prompt: ${r.title}`}
-                onClick={() => onAction(r.title)}
-                className="group flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 hover:bg-surface-elevated"
+                aria-label={
+                  r.active ? `Current conversation: ${r.title}` : `Open conversation: ${r.title}`
+                }
+                aria-current={r.active ? 'true' : undefined}
+                disabled={r.active}
+                onClick={() => onSelectConversation(r.id)}
+                className={cn(
+                  'group flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150',
+                  r.active
+                    ? 'cursor-default bg-accent-muted'
+                    : 'hover:bg-surface-elevated'
+                )}
               >
-                <span className="truncate text-sm text-text-secondary transition-colors group-hover:text-text-primary">
-                  {r.title}
+                <span className="flex min-w-0 flex-col">
+                  <span
+                    className={cn(
+                      'truncate text-sm transition-colors',
+                      r.active
+                        ? 'font-medium text-accent'
+                        : 'text-text-secondary group-hover:text-text-primary'
+                    )}
+                  >
+                    {r.title}
+                  </span>
+                  <span className="text-[10px] text-text-secondary">
+                    {r.turns} {r.turns === 1 ? 'message' : 'messages'}
+                  </span>
                 </span>
                 {r.time && (
                   <span className="shrink-0 rounded-md bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-text-secondary">
@@ -1090,18 +1122,39 @@ function InputBar({
  * Recent list derivation (real history, newest first, de-duplicated)
  * ------------------------------------------------------------------------- */
 
-function deriveRecent(messages: ChatMessage[]): RecentEntry[] {
-  const seen = new Set<string>()
-  const out: RecentEntry[] = []
-  for (let i = messages.length - 1; i >= 0 && out.length < 6; i--) {
-    const m = messages[i]
-    if (m.role !== 'user') continue
-    const title = m.content.trim()
-    if (!title || seen.has(title.toLowerCase())) continue
-    seen.add(title.toLowerCase())
-    out.push({ key: `${i}-${title.slice(0, 24)}`, title, time: relativeTime(m.ts) })
+function deriveRecent(
+  conversationId: string,
+  messages: ChatMessage[],
+  conversations: Conversation[]
+): RecentEntry[] {
+  const rows: RecentEntry[] = []
+
+  // The live conversation leads the list, but only once it has a user turn —
+  // an untouched "New chat" shouldn't create a phantom row.
+  const turns = messages.filter((m) => m.role === 'user' && m.content.trim()).length
+  if (turns > 0) {
+    const last = messages[messages.length - 1]
+    rows.push({
+      id: conversationId,
+      title: conversationTitle(messages),
+      time: relativeTime(last?.ts),
+      turns,
+      active: true,
+    })
   }
-  return out
+
+  for (const c of conversations) {
+    if (c.id === conversationId) continue
+    rows.push({
+      id: c.id,
+      title: c.title,
+      time: relativeTime(c.updatedAt),
+      turns: c.messageCount,
+      active: false,
+    })
+  }
+
+  return rows.slice(0, 8)
 }
 
 /* ----------------------------------------------------------------------------
@@ -1114,6 +1167,9 @@ export default function SwiggyAgent({ provider }: { provider?: ProviderBadge }) 
   const isStreaming = useChatStore((s) => s.isStreaming)
   const connected = useChatStore((s) => s.connected)
   const mode = useChatStore((s) => s.mode)
+  const conversationId = useChatStore((s) => s.conversationId)
+  const conversations = useChatStore((s) => s.conversations)
+  const selectConversation = useChatStore((s) => s.selectConversation)
   const hydrate = useChatStore((s) => s.hydrate)
   const setMode = useChatStore((s) => s.setMode)
   const reset = useChatStore((s) => s.reset)
@@ -1202,7 +1258,10 @@ export default function SwiggyAgent({ provider }: { provider?: ProviderBadge }) 
     void send(text)
   }, [input, send])
 
-  const recent = React.useMemo(() => deriveRecent(messages), [messages])
+  const recent = React.useMemo(
+    () => deriveRecent(conversationId, messages, conversations),
+    [conversationId, messages, conversations]
+  )
 
   // Confirmation: same heuristic the pre-port app used, on the last agent turn.
   const lastMessage = messages[messages.length - 1]
@@ -1248,7 +1307,11 @@ export default function SwiggyAgent({ provider }: { provider?: ProviderBadge }) 
               className="w-72 border-border bg-surface p-0"
             >
               <SheetTitle className="sr-only">Quick actions</SheetTitle>
-              <SidebarContent recent={recent} onAction={prefill} />
+              <SidebarContent
+              recent={recent}
+              onAction={prefill}
+              onSelectConversation={selectConversation}
+            />
             </SheetContent>
           </Sheet>
 
@@ -1304,7 +1367,11 @@ export default function SwiggyAgent({ provider }: { provider?: ProviderBadge }) 
         <div className="flex min-h-0 flex-1">
           {/* Sidebar (desktop) */}
           <aside className="hidden w-64 shrink-0 border-r border-border bg-surface md:flex md:flex-col">
-            <SidebarContent recent={recent} onAction={prefill} />
+            <SidebarContent
+              recent={recent}
+              onAction={prefill}
+              onSelectConversation={selectConversation}
+            />
           </aside>
 
           {/* Chat column */}

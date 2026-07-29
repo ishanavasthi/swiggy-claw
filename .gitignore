@@ -48,3 +48,16 @@ AGENTS.md
 
 # Demo prep (local only)
 VIDEO_SCRIPT.md
+
+# Design source assets (large originals - not needed to build)
+Swiggy/
+
+# Editor / OS cruft
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# Logs
+*.log
+

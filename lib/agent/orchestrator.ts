@@ -19,6 +19,7 @@ const MAX_CREATE_ATTEMPTS = 4;
 const MAX_429_WAIT_MS = 12000;
 
 const MAX_ROUNDS = 8;
+const MAX_UNKNOWN_STRIKES = 2;
 
 function describeError(err: any): string {
   const fg = err?.error?.error?.failed_generation ?? err?.error?.failed_generation;
@@ -32,6 +33,30 @@ interface AccumulatedCall {
   id: string;
   name: string;
   args: string;
+}
+
+/**
+ * Strip model-format control tokens that some providers leak into the function
+ * name. NVIDIA NIM serving `openai/gpt-oss-*` emits Harmony channel markers, so
+ * the name arrives as `your_go_to_items<|channel|>commentary` and every lookup
+ * misses. A few models also namespace the call as `functions.<name>`.
+ *
+ * Keeps the leading run of tool-name characters, which drops anything from the
+ * first control token onward along with stray whitespace or newlines.
+ */
+export function sanitizeToolName(raw: string): string {
+  const withoutNamespace = raw.trim().replace(/^functions[.:]/i, "");
+  const match = withoutNamespace.match(/^[A-Za-z0-9_.-]+/);
+  return match ? match[0] : "";
+}
+
+/** Names the model is actually allowed to call this turn. */
+function validToolNames(tools: ChatCompletionTool[]): Set<string> {
+  const names = new Set<string>();
+  for (const t of tools) {
+    if (t.type === "function" && t.function?.name) names.add(t.function.name);
+  }
+  return names;
 }
 
 function safeParseArgs(raw: string): Record<string, unknown> {
@@ -67,8 +92,14 @@ export async function* runAgentStream(
     { role: "user", content: userMessage },
   ];
 
+  const knownTools = validToolNames(tools);
+  // A model that keeps emitting an unroutable tool name will otherwise burn
+  // every remaining round on the same failure. After MAX_UNKNOWN_STRIKES we stop
+  // offering tools and make it answer in text instead.
+  let unknownStrikes = 0;
+
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    const forceText = round === MAX_ROUNDS - 1;
+    const forceText = round === MAX_ROUNDS - 1 || unknownStrikes >= MAX_UNKNOWN_STRIKES;
 
     // Inline retry so we can yield a notice during 429 backoff (no silent hang).
     let stream: AsyncIterable<ChatCompletionChunk> | undefined;
@@ -134,7 +165,9 @@ export async function* runAgentStream(
       return;
     }
 
-    const ordered = [...calls.values()].filter((c) => c.name);
+    const ordered = [...calls.values()]
+      .map((c) => ({ ...c, name: sanitizeToolName(c.name) }))
+      .filter((c) => c.name);
 
     // Append the assistant turn with its tool_calls (content may be empty).
     messages.push({
@@ -153,10 +186,22 @@ export async function* runAgentStream(
       yield { type: "tool_call", payload: { id: e.id, name: e.name, args } };
 
       let result: unknown;
-      try {
-        result = await callMCPTool(e.name, args);
-      } catch (err) {
-        result = { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+      if (!knownTools.has(e.name)) {
+        // Don't hand a bogus name to the MCP router — tell the model plainly so
+        // it can correct itself, and count the strike.
+        unknownStrikes++;
+        result = {
+          success: false,
+          error: {
+            message: `Unknown tool "${e.name}". Call one of the provided tools by its exact name.`,
+          },
+        };
+      } else {
+        try {
+          result = await callMCPTool(e.name, args);
+        } catch (err) {
+          result = { success: false, error: { message: err instanceof Error ? err.message : String(err) } };
+        }
       }
 
       yield { type: "tool_result", payload: { id: e.id, name: e.name, result } };
