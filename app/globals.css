@@ -93,6 +93,10 @@
   --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-syne), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  /* Real Futura where it's installed (macOS/Adobe), Jost as the web fallback —
+     it's the closest geometric-sans match and ships from Google Fonts. */
+  --font-futura: Futura, "Futura PT", "Futura Std", var(--font-jost),
+    "Century Gothic", ui-sans-serif, sans-serif;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);

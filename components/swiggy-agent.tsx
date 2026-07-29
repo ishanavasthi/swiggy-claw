@@ -7,7 +7,6 @@ import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
-  Flame,
   ShoppingBag,
   ArrowUp,
   Loader2,
@@ -21,6 +20,8 @@ import {
   X,
   SquarePen,
 } from 'lucide-react'
+
+import { SwiggyIcon, SwiggyLockup } from '@/components/swiggy-logo'
 
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -385,15 +386,16 @@ function StatusBadge({ connected }: { connected: boolean }) {
 
 function BrandMark({ active }: { active?: boolean }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="relative flex h-8 w-8 items-center justify-center rounded-lg bg-accent-muted">
-        <Flame className="h-4.5 w-4.5 text-accent" />
+    <div className="flex items-center gap-1.5">
+      <span className="relative flex items-center">
+        <SwiggyLockup className="h-7 w-auto" />
         {active && (
-          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-accent ring-2 ring-background" />
+          <span className="absolute -right-1 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-accent ring-2 ring-background" />
         )}
       </span>
-      <span className="font-display text-lg font-semibold tracking-tight text-text-primary">
-        Swiggy Agent
+      {/* "claw" is set in Futura to visually continue the Swiggy wordmark */}
+      <span className="font-futura text-[28px] font-semibold leading-none tracking-[-0.01em] text-[#FE5005]">
+        claw
       </span>
     </div>
   )
@@ -404,8 +406,7 @@ function BrandFooter() {
     <div className="px-1 py-3 text-center">
       <Separator className="mb-3 bg-border" />
       <p className="flex items-center justify-center gap-1.5 font-sans text-sm text-text-primary">
-        <Flame className="h-3.5 w-3.5 text-accent" />
-        Powered by <span className="font-semibold text-accent">Swiggy</span>
+        Powered by <SwiggyLockup className="h-4 w-auto" />
       </p>
       <p className="mt-1 text-xs text-text-secondary">
         Developed by{' '}
@@ -537,9 +538,7 @@ function AssistantBubble({
 }) {
   return (
     <div className="group flex justify-start gap-2.5">
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-muted">
-        <Flame className="h-4 w-4 text-accent" />
-      </span>
+      <SwiggyIcon className="mt-0.5 h-8 w-8 shrink-0 rounded-lg" />
       <div className="flex min-w-0 max-w-[85%] flex-col items-start">
         <div className="min-w-0 rounded-2xl rounded-tl-sm border border-border bg-surface-elevated px-4 py-3 text-text-primary">
           {loading ? (
@@ -560,7 +559,7 @@ function AssistantBubble({
           )}
         </div>
         <span className="mt-1 px-1 text-[10px] text-text-secondary opacity-0 transition-opacity duration-150 group-hover:opacity-100">
-          Swiggy Agent
+          Swiggy claw
         </span>
       </div>
     </div>
@@ -962,9 +961,7 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-16 text-center">
-      <span className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-accent-muted">
-        <Flame className="h-8 w-8 text-accent" />
-      </span>
+      <SwiggyIcon className="mb-4 h-16 w-16 rounded-2xl" />
       <h2 className="font-display text-2xl font-semibold text-text-primary">
         What can I get you?
       </h2>
@@ -1035,7 +1032,7 @@ function InputBar({
             onChange={handleInput}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            aria-label="Message the Swiggy Agent"
+            aria-label="Message Swiggy claw"
             className="swiggy-scroll max-h-[140px] w-full resize-none bg-transparent px-4 py-3 text-sm text-text-primary outline-none placeholder:text-text-secondary disabled:opacity-50"
           />
         </div>

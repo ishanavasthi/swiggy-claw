@@ -45,3 +45,6 @@ next-env.d.ts
 CLAUDE.md
 AGENTS.md
 .devserver.log
+
+# Demo prep (local only)
+VIDEO_SCRIPT.md
