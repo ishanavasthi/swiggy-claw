@@ -66,3 +66,15 @@ export type SSEEvent =
   | { type: "notice"; payload: string } // non-fatal (e.g. rate-limit backoff)
   | { type: "done"; payload: null }
   | { type: "error"; payload: string };
+
+/** One saved chat session. The live session is held directly on the store. */
+export interface Conversation {
+  id: string;
+  /** Derived from the opening user message. */
+  title: string;
+  messages: ChatMessage[];
+  timeline: TimelineItem[];
+  updatedAt: number;
+  /** Number of user turns — shown in the Recent list. */
+  messageCount: number;
+}

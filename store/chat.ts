@@ -4,6 +4,7 @@ import { create } from "zustand";
 import type {
   AgentMode,
   ChatMessage,
+  Conversation,
   TimelineItem,
   TimelineMessage,
   ToolStatus,
@@ -20,13 +21,20 @@ import type {
  *                this stays plain {role, content}.
  */
 
-const STORAGE_KEY = "swiggy-claw-chat-v2";
+const STORAGE_KEY = "swiggy-claw-chat-v3";
+const LEGACY_V2_KEY = "swiggy-claw-chat-v2";
 const LEGACY_MESSAGES_KEY = "swiggy-claw-messages";
 
+/** How many finished conversations to keep in the Recent list. */
+const MAX_ARCHIVED = 20;
+
 interface PersistedShape {
-  version: 2;
+  version: 3;
+  conversationId: string;
   messages: ChatMessage[];
   timeline: TimelineItem[];
+  /** Finished conversations, newest first. The live one is not in here. */
+  conversations: Conversation[];
   mode: AgentMode;
 }
 
@@ -91,15 +99,63 @@ function errorMessageForResult(result: unknown): string | undefined {
   return undefined;
 }
 
+// --- conversations ----------------------------------------------------------
+
+/** Title a conversation by its opening user message. */
+export function conversationTitle(messages: ChatMessage[]): string {
+  const first = messages.find((m) => m.role === "user" && m.content.trim());
+  const raw = first?.content.trim().replace(/\s+/g, " ") ?? "New conversation";
+  return raw.length > 60 ? `${raw.slice(0, 59)}…` : raw;
+}
+
+/** A conversation counts as real once the user has actually said something. */
+function hasContent(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.role === "user" && m.content.trim().length > 0);
+}
+
+function snapshot(
+  id: string,
+  messages: ChatMessage[],
+  timeline: TimelineItem[]
+): Conversation {
+  const last = messages[messages.length - 1];
+  return {
+    id,
+    title: conversationTitle(messages),
+    messages,
+    timeline,
+    updatedAt: last?.ts ?? Date.now(),
+    messageCount: messages.filter((m) => m.role === "user").length,
+  };
+}
+
+/**
+ * Move the live conversation into the archive, newest first. Empty
+ * conversations are dropped rather than archived, and re-archiving the same id
+ * replaces the older copy instead of duplicating it.
+ */
+function archiveCurrent(s: ChatState): Conversation[] {
+  if (!hasContent(s.messages)) return s.conversations;
+  const rest = s.conversations.filter((c) => c.id !== s.conversationId);
+  return [snapshot(s.conversationId, s.messages, s.timeline), ...rest].slice(0, MAX_ARCHIVED);
+}
+
 // --- persistence ------------------------------------------------------------
 
-function persist(state: Pick<ChatState, "messages" | "timeline" | "mode">) {
+type Persistable = Pick<
+  ChatState,
+  "conversationId" | "messages" | "timeline" | "conversations" | "mode"
+>;
+
+function persist(state: Persistable) {
   if (typeof window === "undefined") return;
   try {
     const blob: PersistedShape = {
-      version: 2,
+      version: 3,
+      conversationId: state.conversationId,
       messages: state.messages,
       timeline: state.timeline,
+      conversations: state.conversations,
       mode: state.mode,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(blob));
@@ -131,8 +187,12 @@ function readLegacy(): { messages: ChatMessage[]; timeline: TimelineItem[] } | n
 // --- store ------------------------------------------------------------------
 
 interface ChatState {
+  /** Id of the live conversation (never present in `conversations`). */
+  conversationId: string;
   messages: ChatMessage[];
   timeline: TimelineItem[];
+  /** Finished conversations, newest first. */
+  conversations: Conversation[];
   isStreaming: boolean;
   /** false once the backend has reported a 401 (Swiggy session expired). */
   connected: boolean;
@@ -151,12 +211,17 @@ interface ChatState {
   resolveToolCall: (id: string, result: unknown) => void;
   finaliseAssistantMessage: () => void;
   abortAssistant: () => void;
+  /** Archive the live conversation and start an empty one. */
   reset: () => void;
+  /** Re-open an archived conversation, archiving the live one first. */
+  selectConversation: (id: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
+  conversationId: uid("c"),
   messages: [],
   timeline: [],
+  conversations: [],
   isStreaming: false,
   connected: true,
   mode: "food",
@@ -168,13 +233,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const blob = JSON.parse(raw) as Partial<PersistedShape>;
-        if (blob && blob.version === 2 && Array.isArray(blob.messages) && Array.isArray(blob.timeline)) {
+        if (blob && blob.version === 3 && Array.isArray(blob.messages) && Array.isArray(blob.timeline)) {
           set({
+            conversationId: blob.conversationId ?? uid("c"),
             messages: blob.messages,
             timeline: blob.timeline,
+            conversations: Array.isArray(blob.conversations) ? blob.conversations : [],
             mode: blob.mode ?? "food",
             hydrated: true,
           });
+          return;
+        }
+      }
+      // v2 had a single unnamed conversation — adopt it as the live one.
+      const v2raw = window.localStorage.getItem(LEGACY_V2_KEY);
+      if (v2raw) {
+        const blob = JSON.parse(v2raw) as { messages?: ChatMessage[]; timeline?: TimelineItem[]; mode?: AgentMode };
+        if (Array.isArray(blob?.messages) && Array.isArray(blob?.timeline)) {
+          const migrated = {
+            conversationId: uid("c"),
+            messages: blob.messages,
+            timeline: blob.timeline,
+            conversations: [] as Conversation[],
+            mode: blob.mode ?? ("food" as AgentMode),
+          };
+          set({ ...migrated, hydrated: true });
+          window.localStorage.removeItem(LEGACY_V2_KEY);
+          persist(migrated);
           return;
         }
       }
@@ -182,7 +267,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (legacy) {
         set({ ...legacy, hydrated: true });
         window.localStorage.removeItem(LEGACY_MESSAGES_KEY);
-        persist({ ...legacy, mode: get().mode });
+        persist({ ...legacy, conversationId: get().conversationId, conversations: [], mode: get().mode });
         return;
       }
     } catch {
@@ -194,7 +279,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setMode: (mode) => {
     set({ mode });
     const s = get();
-    persist({ messages: s.messages, timeline: s.timeline, mode });
+    persist({ conversationId: s.conversationId, messages: s.messages, timeline: s.timeline, conversations: s.conversations, mode });
   },
 
   setConnected: (connected) => set({ connected }),
@@ -211,7 +296,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       { kind: "message", id: uid("u"), role: "user", content: text },
     ];
     set({ messages, timeline });
-    persist({ messages, timeline, mode: s.mode });
+    persist({ conversationId: s.conversationId, messages, timeline, conversations: s.conversations, mode: s.mode });
   },
 
   beginAssistant: () => set({ timeline: openAssistant(get().timeline) }),
@@ -291,7 +376,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       : s.messages;
 
     set({ messages, timeline });
-    persist({ messages, timeline, mode: s.mode });
+    persist({ conversationId: s.conversationId, messages, timeline, conversations: s.conversations, mode: s.mode });
   },
 
   /** Hard stop (fatal error): drop the open bubble without writing history. */
@@ -299,12 +384,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const s = get();
     const timeline = closeOpenAssistant(s.timeline);
     set({ timeline, isStreaming: false });
-    persist({ messages: s.messages, timeline, mode: s.mode });
+    persist({ conversationId: s.conversationId, messages: s.messages, timeline, conversations: s.conversations, mode: s.mode });
   },
 
   reset: () => {
-    const mode = get().mode;
-    set({ messages: [], timeline: [], isStreaming: false });
-    persist({ messages: [], timeline: [], mode });
+    const s = get();
+    const conversations = archiveCurrent(s);
+    const next = {
+      conversationId: uid("c"),
+      messages: [] as ChatMessage[],
+      timeline: [] as TimelineItem[],
+      conversations,
+      mode: s.mode,
+    };
+    set({ ...next, isStreaming: false });
+    persist(next);
+  },
+
+  selectConversation: (id) => {
+    const s = get();
+    if (id === s.conversationId) return;
+    const target = s.conversations.find((c) => c.id === id);
+    if (!target) return;
+    // Archive the live one first, then lift the target out of the archive so a
+    // conversation is never in both places at once.
+    const archived = archiveCurrent(s).filter((c) => c.id !== id);
+    const next = {
+      conversationId: target.id,
+      messages: target.messages,
+      timeline: target.timeline,
+      conversations: archived,
+      mode: s.mode,
+    };
+    set({ ...next, isStreaming: false });
+    persist(next);
   },
 }));
