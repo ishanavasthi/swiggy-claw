@@ -101,6 +101,16 @@ const EMPTY_COPY: Record<AgentMode, string> = {
   dineout: 'Find a restaurant and lock in a free table tonight.',
 }
 
+/** Live LLM endpoint, resolved server-side in app/page.tsx and shown in the footer. */
+export interface ProviderBadge {
+  /** Provider display name, e.g. "NVIDIA NIM". */
+  label: string
+  /** Full model id, surfaced as a tooltip. */
+  model: string
+  /** Model id minus the vendor prefix — what's rendered. */
+  shortModel: string
+}
+
 /** Reused from the pre-port app: detects an agent turn that awaits a yes/no. */
 const CONFIRM_RE = /\b(yes\s*\/\s*no|confirm\??|shall i)\b/i
 
@@ -386,16 +396,21 @@ function StatusBadge({ connected }: { connected: boolean }) {
 
 function BrandMark({ active }: { active?: boolean }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-2.5">
       <span className="relative flex items-center">
-        <SwiggyLockup className="h-7 w-auto" />
+        <SwiggyLockup className="h-6 w-auto" />
         {active && (
-          <span className="absolute -right-1 -top-0.5 h-2 w-2 animate-pulse rounded-full bg-accent ring-2 ring-background" />
+          // Anchored to the tile (~23px wide at h-6), not the end of the wordmark.
+          <span className="absolute -top-1 left-[17px] h-2 w-2 animate-pulse rounded-full bg-accent ring-2 ring-background" />
         )}
       </span>
-      {/* "claw" is set in Futura to visually continue the Swiggy wordmark */}
-      <span className="font-futura text-[28px] font-semibold leading-none tracking-[-0.01em] text-[#FE5005]">
-        claw
+      {/* Two marks, not one co-branded wordmark: Swiggy's orange lockup stays
+          theirs, "Claw" is ours — set in the app's display face (Syne) so the
+          header uses the same type system as the rest of the UI. The rule also
+          spares us baseline-matching live text against the wordmark outlines. */}
+      <span aria-hidden className="h-5 w-px shrink-0 bg-border" />
+      <span className="font-display text-[17px] font-semibold leading-none tracking-[-0.01em] text-text-primary">
+        Claw
       </span>
     </div>
   )
@@ -405,8 +420,8 @@ function BrandFooter() {
   return (
     <div className="px-1 py-3 text-center">
       <Separator className="mb-3 bg-border" />
-      <p className="flex items-center justify-center gap-1.5 font-sans text-sm text-text-primary">
-        Powered by <SwiggyLockup className="h-4 w-auto" />
+      <p className="flex items-center justify-center gap-1.5 font-sans text-sm text-text-secondary">
+        Powered by <SwiggyLockup className="h-5 w-auto" />
       </p>
       <p className="mt-1 text-xs text-text-secondary">
         Developed by{' '}
@@ -996,6 +1011,7 @@ function InputBar({
   onSend,
   streaming,
   textareaRef,
+  provider,
 }: {
   value: string
   placeholder: string
@@ -1003,6 +1019,7 @@ function InputBar({
   onSend: () => void
   streaming: boolean
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  provider?: ProviderBadge
 }) {
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value)
@@ -1051,7 +1068,19 @@ function InputBar({
         </Button>
       </div>
       <p className="mx-auto mt-2 max-w-3xl text-center text-xs text-text-secondary">
-        ⌘↵ to send · Powered by Groq + Swiggy MCP
+        ⌘↵ to send · Powered by{' '}
+        {provider ? (
+          <>
+            {provider.label}{' '}
+            {/* Full id on hover — the display form drops the vendor prefix. */}
+            <span className="font-mono" title={provider.model}>
+              {provider.shortModel}
+            </span>
+          </>
+        ) : (
+          'an OpenAI-compatible LLM'
+        )}{' '}
+        + Swiggy MCP
       </p>
     </div>
   )
@@ -1079,7 +1108,7 @@ function deriveRecent(messages: ChatMessage[]): RecentEntry[] {
  * Main component
  * ------------------------------------------------------------------------- */
 
-export default function SwiggyAgent() {
+export default function SwiggyAgent({ provider }: { provider?: ProviderBadge }) {
   const timeline = useChatStore((s) => s.timeline)
   const messages = useChatStore((s) => s.messages)
   const isStreaming = useChatStore((s) => s.isStreaming)
@@ -1332,6 +1361,7 @@ export default function SwiggyAgent() {
               onSend={handleSend}
               streaming={isStreaming}
               textareaRef={textareaRef}
+              provider={provider}
             />
           </div>
         </div>

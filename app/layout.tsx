@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Syne, DM_Sans, JetBrains_Mono, Jost } from "next/font/google";
+import { Syne, DM_Sans, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -13,13 +13,6 @@ const syne = Syne({
   subsets: ["latin"],
   weight: ["500", "600", "700", "800"],
   variable: "--font-syne",
-});
-
-// Web fallback for Futura — used by the "claw" wordmark.
-const jost = Jost({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--font-jost",
 });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -42,7 +35,7 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={`bg-background ${dmSans.variable} ${syne.variable} ${jetbrainsMono.variable} ${jost.variable}`}
+      className={`bg-background ${dmSans.variable} ${syne.variable} ${jetbrainsMono.variable}`}
     >
       <body className="font-sans antialiased">
         <ThemeProvider

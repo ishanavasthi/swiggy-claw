@@ -32,6 +32,37 @@ const PROVIDERS: Record<LLMProvider, ProviderConfig> = {
   },
 };
 
+/** Human-readable provider names for the UI. */
+const PROVIDER_LABELS: Record<LLMProvider, string> = {
+  nvidia: "NVIDIA NIM",
+  groq: "Groq",
+};
+
+export interface ProviderInfo {
+  provider: LLMProvider;
+  /** Display name, e.g. "NVIDIA NIM". */
+  label: string;
+  /** Full model id, e.g. "deepseek-ai/deepseek-v4-pro". */
+  model: string;
+  /** Model id without the vendor prefix — what the footer shows. */
+  shortModel: string;
+}
+
+/**
+ * Snapshot of the active LLM config for display. Safe to send to the client:
+ * carries no key material.
+ */
+export function providerInfo(): ProviderInfo {
+  const provider = activeProvider();
+  const model = resolveModel(provider);
+  return {
+    provider,
+    label: PROVIDER_LABELS[provider],
+    model,
+    shortModel: model.split("/").pop() ?? model,
+  };
+}
+
 export function activeProvider(): LLMProvider {
   const raw = process.env.LLM_PROVIDER?.trim().toLowerCase();
   if (raw === "groq" || raw === "nvidia") return raw;
