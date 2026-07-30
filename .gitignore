@@ -45,6 +45,8 @@ next-env.d.ts
 CLAUDE.md
 AGENTS.md
 .devserver.log
+# Agent worktrees — full repo copies, never part of the project source.
+.claude/
 
 # Demo prep (local only)
 VIDEO_SCRIPT.md
