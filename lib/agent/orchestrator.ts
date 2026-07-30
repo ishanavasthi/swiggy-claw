@@ -69,11 +69,113 @@ function safeParseArgs(raw: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Cap on one serialized tool result carried back into history. Enough to keep
+ * ids and a short list intact; bounded so a long catalogue can't dominate the
+ * input budget once several turns have accumulated.
+ */
+const MAX_HISTORY_RESULT_CHARS = 800;
+
+function compactResult(result: unknown): string {
+  const raw = typeof result === "string" ? result : JSON.stringify(result ?? null);
+  return raw.length > MAX_HISTORY_RESULT_CHARS
+    ? `${raw.slice(0, MAX_HISTORY_RESULT_CHARS)}…[truncated]`
+    : raw;
+}
+
+/**
+ * Tools whose result is a snapshot of mutable server state rather than a durable
+ * fact. An order confirmation stays true forever; a cart listing stops being
+ * true the moment anything touches the cart — and checkout empties it outright.
+ *
+ * Replaying every old snapshot invites the model to merge them: asked to add
+ * bread after a completed order, it reported the four items from the previous
+ * cart plus the bread, when the live cart held only bread. So only the most
+ * recent snapshot per tool keeps its payload.
+ */
+const SNAPSHOT_TOOLS = new Set([
+  "get_cart",
+  "get_food_cart",
+  "update_cart",
+  "update_food_cart",
+  "clear_cart",
+  "flush_food_cart",
+  "apply_food_coupon",
+]);
+
+const SUPERSEDED = JSON.stringify({
+  note: "Superseded — a later call to this tool returned the current state. Use that result, not this one.",
+});
+
+/**
+ * Flat UI history -> provider messages, replaying each assistant turn's tool
+ * calls alongside its text.
+ *
+ * Text alone is not enough state to continue a turn. A turn that resolved an
+ * addressId, built a cart, or looked up spinIds leaves none of that in its prose,
+ * so the next request would start blind: the model re-resolves the address,
+ * re-asks a question it already asked, and — with nothing to bind a bare "yes"
+ * to — eventually confabulates (up to and including claiming a tool it was
+ * handed does not exist). Replaying the calls keeps the resolved facts on the
+ * record.
+ *
+ * Pairing is safe by construction: the `tool_calls` array and its result
+ * messages are emitted from the same filtered record list, so neither side can
+ * dangle. Ids are re-scoped per history entry because providers reuse call ids
+ * (`call_1`) across turns, and duplicates within one request are ambiguous.
+ */
 export function buildHistoryFromMessages(messages: ChatMessage[]): ChatCompletionMessageParam[] {
-  // Carry only finalized text turns across requests — no dangling tool_calls to pair.
-  return messages
-    .filter((m) => m.content && m.content.trim().length > 0)
-    .map((m) => ({ role: m.role, content: m.content }) as ChatCompletionMessageParam);
+  // Only completed calls replay — one still awaiting a result would leave an
+  // unanswered tool_call in the request.
+  const completed = (m: ChatMessage, i: number) =>
+    (m.toolCalls ?? [])
+      .filter((c) => c.id && c.name && c.result !== undefined)
+      .map((c) => ({ ...c, id: `h${i}_${c.id}` }));
+
+  // Which occurrence of each snapshot tool is the live one. Everything earlier
+  // is stale by the time this request runs.
+  const liveSnapshot = new Map<string, string>();
+  messages.forEach((m, i) => {
+    if (m.role !== "assistant") return;
+    for (const c of completed(m, i)) {
+      if (SNAPSHOT_TOOLS.has(c.name)) liveSnapshot.set(c.name, c.id);
+    }
+  });
+
+  const out: ChatCompletionMessageParam[] = [];
+
+  messages.forEach((m, i) => {
+    if (m.role === "user") {
+      if (m.content?.trim()) out.push({ role: "user", content: m.content });
+      return;
+    }
+
+    const calls = completed(m, i);
+
+    if (calls.length) {
+      out.push({
+        role: "assistant",
+        content: null,
+        tool_calls: calls.map((c) => ({
+          id: c.id,
+          type: "function",
+          function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
+        })),
+      });
+      for (const c of calls) {
+        const stale = SNAPSHOT_TOOLS.has(c.name) && liveSnapshot.get(c.name) !== c.id;
+        out.push({
+          role: "tool",
+          tool_call_id: c.id,
+          content: stale ? SUPERSEDED : compactResult(c.result),
+        });
+      }
+    }
+
+    if (m.content?.trim()) out.push({ role: "assistant", content: m.content });
+  });
+
+  return out;
 }
 
 export async function* runAgentStream(
@@ -165,8 +267,10 @@ export async function* runAgentStream(
       return;
     }
 
+    // A missing id would collide in the UI timeline (cards are keyed by it) and
+    // break tool-result pairing when the turn is replayed as history.
     const ordered = [...calls.values()]
-      .map((c) => ({ ...c, name: sanitizeToolName(c.name) }))
+      .map((c, i) => ({ ...c, id: c.id || `call_${round}_${i}`, name: sanitizeToolName(c.name) }))
       .filter((c) => c.name);
 
     // Append the assistant turn with its tool_calls (content may be empty).

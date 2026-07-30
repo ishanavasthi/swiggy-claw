@@ -2,7 +2,7 @@
 // Each tool carries a raw JSON-Schema inputSchema (passed verbatim to Groq) and a handler.
 
 import type { SwiggyServer } from "@/types/agent";
-import type { SwiggyOrder } from "@/types/swiggy";
+import type { SwiggyOrder, DineoutRestaurant, DineoutBooking } from "@/types/swiggy";
 import {
   ADDRESSES,
   MENU,
@@ -19,6 +19,14 @@ import {
   recomputeInstamartCart,
   findMenuItem,
   findProduct,
+  findDineoutRestaurant,
+  rankDineoutRestaurants,
+  resolveSearchPoint,
+  nearestSavedLocation,
+  bookableCountNear,
+  formatKm,
+  resolveDate,
+  slotsFor,
 } from "./catalog";
 
 type Args = Record<string, any>;
@@ -40,20 +48,15 @@ const EMPTY_SCHEMA: Json = { type: "object", properties: {} };
 // --- Local mock state not held in catalog ---
 const instamartOrders: SwiggyOrder[] = [];
 
-const DINEOUT_RESTAURANTS = [
-  { id: "do_1", name: "The Fatty Bao", rating: 4.6, cuisine: "Asian", distance: "1.2 km" },
-  { id: "do_2", name: "Toit Brewpub", rating: 4.7, cuisine: "Continental", distance: "2.0 km" },
-];
-
-function makeSlots(guestCount: number) {
-  // Deterministic 7-band day: alternating free / paid.
-  const bands = ["12:30", "13:30", "19:00", "20:00", "20:30", "21:00", "21:30"];
-  return bands.map((startTime, i) => ({
-    slotId: `slot_${i}`,
-    startTime,
-    guestCount,
-    isFree: i % 2 === 0, // free slots only are bookable
-  }));
+/** Why this restaurant can't take the booking, or null if it can. */
+function notBookable(r: DineoutRestaurant, guestCount: number): string | null {
+  if (r.availabilityStatus === "CLOSED") {
+    return `${r.name} is not taking table bookings — ${r.closedReason ?? "closed"}.`;
+  }
+  if (guestCount > r.maxPartySize) {
+    return `${r.name} seats at most ${r.maxPartySize} per booking. Split the party or pick another restaurant.`;
+  }
+  return null;
 }
 
 export const MOCK_TOOLS: MockTool[] = [
@@ -392,59 +395,117 @@ export const MOCK_TOOLS: MockTool[] = [
   {
     name: "get_saved_locations",
     server: "dineout",
-    description: "Saved locations for Dineout as lat/lng coordinates (NOT addressId). Use before searching dine-in restaurants.",
+    description:
+      "The user's saved Dineout locations as lat/lng coordinates (NOT addressId). ALWAYS call this first for anything table-related: match the area the user named (e.g. \"Indiranagar\") to a label yourself and pass that location's lat/lng to search_restaurants_dineout. Never ask the user for coordinates.",
     inputSchema: EMPTY_SCHEMA,
-    handler: () => ok({ locations: DINEOUT_LOCATIONS }),
+    handler: () =>
+      ok({
+        locations: DINEOUT_LOCATIONS.map((l) => ({
+          ...l,
+          restaurantsNearby: bookableCountNear(l.lat, l.lng),
+        })),
+        usage: "Pass the lat and lng of the matching location to search_restaurants_dineout.",
+      }),
   },
   {
     name: "search_restaurants_dineout",
     server: "dineout",
-    description: "TABLE BOOKING ONLY (dine-in reservations). Use ONLY when the user wants to BOOK A TABLE / reserve seats at a restaurant to eat there. NEVER use this to order food for delivery — use search_restaurants for that. Takes lat/lng, never an addressId.",
+    description:
+      "TABLE BOOKING ONLY (dine-in reservations). Use ONLY when the user wants to BOOK A TABLE / reserve seats at a restaurant to eat there. NEVER use this to order food for delivery — use search_restaurants for that. Takes lat/lng from get_saved_locations, never an addressId. Results are nearest-first; only availabilityStatus OPEN can be booked.",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string" },
-        lat: { type: "number" },
-        lng: { type: "number" },
+        query: {
+          type: "string",
+          description: "Optional cuisine, dish, vibe or restaurant name, e.g. \"asian\", \"rooftop\", \"Toit\". Omit to list the closest places.",
+        },
+        lat: { type: "number", description: "Latitude from get_saved_locations" },
+        lng: { type: "number", description: "Longitude from get_saved_locations" },
       },
       required: ["lat", "lng"],
     },
-    handler: ({ lat, lng }) => {
-      if (typeof lat !== "number" || typeof lng !== "number") return fail("lat and lng are required (from get_saved_locations).");
-      return ok({ restaurants: DINEOUT_RESTAURANTS });
+    handler: ({ query, lat, lng }) => {
+      if (typeof lat !== "number" || typeof lng !== "number") {
+        return fail(
+          "lat and lng are required. Call get_saved_locations, match the area the user named to one of the labels, and pass that location's lat/lng — do not ask the user for coordinates."
+        );
+      }
+      const point = resolveSearchPoint(lat, lng);
+      const { queryMatch, ranked } = rankDineoutRestaurants(point.lat, point.lng, query as string | undefined);
+      const q = String(query ?? "").trim();
+      const notes = [
+        point.snappedFrom &&
+          `lat/lng ${point.snappedFrom} is outside the service area — searched near your default location instead. Take coordinates from get_saved_locations.`,
+        queryMatch === "miss" && `No dine-in match for "${q}" nearby — showing the closest places instead.`,
+      ].filter(Boolean);
+      return ok({
+        searchedNear: nearestSavedLocation(point.lat, point.lng).label,
+        query: q || null,
+        ...(notes.length ? { note: notes.join(" ") } : {}),
+        restaurants: ranked.map(({ restaurant: r, km }) => ({
+          id: r.id,
+          name: r.name,
+          cuisine: r.cuisine,
+          rating: r.rating,
+          ratingCount: r.ratingCount,
+          area: r.area,
+          distance: formatKm(km),
+          priceForTwo: r.priceForTwo,
+          availabilityStatus: r.availabilityStatus,
+          ...(r.closedReason ? { closedReason: r.closedReason } : {}),
+          ...(r.deals.length ? { topDeal: r.deals[0] } : {}),
+        })),
+      });
     },
   },
   {
     name: "get_restaurant_details",
     server: "dineout",
-    description: "Ratings, deals, amenities and opening hours for a dine-in restaurant.",
+    description: "Ratings, deals, amenities, must-try dishes, address and opening hours for a dine-in restaurant.",
     inputSchema: {
       type: "object",
-      properties: { restaurantId: { type: "string" } },
+      properties: { restaurantId: { type: "string", description: "Id from search_restaurants_dineout" } },
       required: ["restaurantId"],
     },
     handler: ({ restaurantId }) => {
-      const r = DINEOUT_RESTAURANTS.find((x) => x.id === restaurantId);
-      if (!r) return fail(`Unknown restaurantId: ${restaurantId}`);
-      return ok({ ...r, amenities: ["Bar", "Outdoor seating", "Parking"], deals: ["20% off food (free slot)"], hours: "12:00–23:00" });
+      const r = findDineoutRestaurant(String(restaurantId));
+      if (!r) return fail(`Unknown restaurantId: ${restaurantId}. Call search_restaurants_dineout first.`);
+      return ok({
+        ...r,
+        bookingPolicy:
+          "Free slots confirm instantly. Premium slots hold the table for a fee and are not supported in v1.",
+      });
     },
   },
   {
     name: "get_available_slots",
     server: "dineout",
-    description: "7-day-forward table availability for a restaurant by date and party size. Only isFree slots are bookable in v1.",
+    description: "7-day-forward table availability for a restaurant by date and party size. Only isFree slots are bookable in v1 — premium slots carry a booking fee.",
     inputSchema: {
       type: "object",
       properties: {
         restaurantId: { type: "string" },
-        date: { type: "string", description: "YYYY-MM-DD" },
-        guestCount: { type: "number" },
+        date: { type: "string", description: "YYYY-MM-DD. Defaults to today when omitted." },
+        guestCount: { type: "number", description: "Party size" },
       },
       required: ["restaurantId", "date", "guestCount"],
     },
     handler: ({ restaurantId, date, guestCount }) => {
-      if (!restaurantId) return fail("restaurantId is required");
-      return ok({ restaurantId, date, slots: makeSlots(Number(guestCount) || 2) });
+      const r = findDineoutRestaurant(String(restaurantId));
+      if (!r) return fail(`Unknown restaurantId: ${restaurantId}. Call search_restaurants_dineout first.`);
+      const unbookable = notBookable(r, Number(guestCount) || 2);
+      if (unbookable) return fail(unbookable);
+      const guests = Number(guestCount) || 2;
+      const resolvedDate = resolveDate(date);
+      const slots = slotsFor(r, resolvedDate, guests);
+      return ok({
+        restaurantId: r.id,
+        restaurantName: r.name,
+        date: resolvedDate,
+        guestCount: guests,
+        freeSlotCount: slots.filter((s) => s.isFree).length,
+        slots,
+      });
     },
   },
   {
@@ -455,26 +516,44 @@ export const MOCK_TOOLS: MockTool[] = [
       type: "object",
       properties: {
         restaurantId: { type: "string" },
-        slotId: { type: "string" },
-        date: { type: "string" },
-        guestCount: { type: "number" },
+        slotId: { type: "string", description: "slotId of a FREE slot from get_available_slots" },
+        date: { type: "string", description: "YYYY-MM-DD — the same date the slots were listed for" },
+        guestCount: { type: "number", description: "Same party size the slots were listed for" },
       },
       required: ["restaurantId", "slotId", "date", "guestCount"],
     },
     handler: ({ restaurantId, slotId, date, guestCount }) => {
-      const r = DINEOUT_RESTAURANTS.find((x) => x.id === restaurantId);
+      const r = findDineoutRestaurant(String(restaurantId));
       if (!r) return fail(`Unknown restaurantId: ${restaurantId}`);
-      const slot = makeSlots(Number(guestCount) || 2).find((s) => s.slotId === slotId);
-      if (!slot) return fail(`Unknown slotId: ${slotId}`);
-      if (!slot.isFree) return fail("That slot is paid; v1 supports FREE slots only. Pick an isFree slot.");
+      const unbookable = notBookable(r, Number(guestCount) || 2);
+      if (unbookable) return fail(unbookable);
+      const guests = Number(guestCount) || 2;
+      const resolvedDate = resolveDate(date);
+      const slots = slotsFor(r, resolvedDate, guests);
+      const slot = slots.find((s) => s.slotId === slotId);
+      if (!slot) {
+        const free = slots.filter((s) => s.isFree).map((s) => `${s.slotId} (${s.startTime})`);
+        return fail(
+          `No slot "${slotId}" at ${r.name} on ${resolvedDate} for ${guests}. Free slots: ${free.join(", ") || "none"}.`
+        );
+      }
+      if (!slot.isFree) {
+        return fail(
+          `The ${slot.startTime} slot is premium (₹${slot.bookingFee} to hold the table); v1 books FREE slots only. Pick a slot with isFree:true.`
+        );
+      }
       state.bookingSeq += 1;
-      const booking = {
+      const booking: DineoutBooking = {
         bookingId: `bk_${state.bookingSeq}`,
         status: "CONFIRMED",
+        restaurantId: r.id,
         restaurantName: r.name,
-        restaurantAddress: `${r.name}, Indiranagar, Bangalore`,
-        slot: `${date} ${slot.startTime}`,
-        guestCount: Number(guestCount) || 2,
+        restaurantAddress: r.address,
+        slot: `${resolvedDate} ${slot.startTime}`,
+        startTime: slot.startTime,
+        guestCount: guests,
+        ...(slot.offer ? { offer: slot.offer } : {}),
+        confirmationCode: `SWG${1000 + state.bookingSeq * 7}`,
       };
       state.bookings.push(booking);
       return ok(booking);

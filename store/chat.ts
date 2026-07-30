@@ -7,6 +7,7 @@ import type {
   Conversation,
   TimelineItem,
   TimelineMessage,
+  ToolCallRecord,
   ToolStatus,
 } from "@/types/agent";
 
@@ -16,9 +17,10 @@ import type {
  *  - `timeline`  the ordered render model. Preserves text → tool → text
  *                interleaving inside a single agent turn, which is what the UI
  *                draws (bubbles with tool cards positioned between them).
- *  - `messages`  the flat API history POSTed back to /api/chat. The server's
- *                `buildHistoryFromMessages` filters to non-empty text turns, so
- *                this stays plain {role, content}.
+ *  - `messages`  the flat API history POSTed back to /api/chat. One entry per
+ *                turn: the folded text plus the tool calls that ran during it.
+ *                The server's `buildHistoryFromMessages` expands those records
+ *                back into paired assistant/tool messages.
  */
 
 const STORAGE_KEY = "swiggy-claw-chat-v3";
@@ -355,25 +357,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   /**
    * done/error: close the open bubble and fold every assistant bubble produced
-   * since the last user turn into one history entry.
+   * since the last user turn into one history entry — text *and* the tools that
+   * ran. The tool records are what let the next request see the addressId, cart
+   * or spinIds this turn resolved; without them the agent restarts blind and
+   * re-asks questions it has already answered.
    */
   finaliseAssistantMessage: () => {
     const s = get();
     const timeline = closeOpenAssistant(s.timeline);
 
     const parts: string[] = [];
+    const toolCalls: ToolCallRecord[] = [];
     for (let i = timeline.length - 1; i >= 0; i--) {
       const it = timeline[i];
       if (it.kind === "message" && it.role === "user") break;
+      if (it.kind === "tool" && it.result !== undefined) {
+        toolCalls.unshift({ id: it.id, name: it.name, args: it.args, result: it.result });
+      }
       if (it.kind === "message" && it.role === "assistant" && it.content.trim()) {
         parts.unshift(it.content);
       }
     }
 
     const content = parts.join("\n\n");
-    const messages: ChatMessage[] = content
-      ? [...s.messages, { role: "assistant", content, ts: Date.now() }]
-      : s.messages;
+    // A turn that ran tools but produced no text still carries state worth
+    // keeping — that is exactly the turn the next one has to build on.
+    const messages: ChatMessage[] =
+      content || toolCalls.length
+        ? [
+            ...s.messages,
+            {
+              role: "assistant",
+              content,
+              ...(toolCalls.length ? { toolCalls } : {}),
+              ts: Date.now(),
+            },
+          ]
+        : s.messages;
 
     set({ messages, timeline });
     persist({ conversationId: s.conversationId, messages, timeline, conversations: s.conversations, mode: s.mode });

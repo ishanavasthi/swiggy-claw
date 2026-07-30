@@ -11,6 +11,12 @@ Streamed text is stored verbatim so the saved history matches what the user actu
 Tool names are sanitized and validated against the offered tool list before routing; after
 two unknown-name strikes the loop stops offering tools so the turn ends in text.
 
+**History replay.** `buildHistoryFromMessages` expands each finalized turn's recorded tool
+calls back into paired assistant/tool messages, so a later turn can see the `addressId`,
+cart or spinIds an earlier one resolved. Calls still awaiting a result are dropped, ids are
+re-scoped per turn against provider id reuse, results are truncated at 800 chars, and cart
+snapshots superseded by a later call to the same tool are replaced with a marker.
+
 **Guard layer.** Sits between the loop and the MCP router. Enforces the ₹1,000 food-cart cap
 by reading the cart before `place_food_order`. Wraps `place_food_order` and Instamart
 `checkout` in check-then-retry against their respective order lists. `book_table` is called
