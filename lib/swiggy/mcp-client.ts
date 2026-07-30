@@ -59,7 +59,15 @@ export async function createClients(token?: string): Promise<SwiggyMCPClients> {
 let cache: { key: string; clients: Promise<SwiggyMCPClients> } | null = null;
 
 export function getClients(token?: string): Promise<SwiggyMCPClients> {
-  const key = useMock() ? "mock" : token ?? "";
+  const mock = useMock();
+
+  // A cached mock client closes over the tool registry it was built with, so in
+  // dev it keeps serving the old tool set after an edit to the mock. Mock clients
+  // are in-process over an in-memory transport and cheap to rebuild (~0.6ms), so
+  // only the real (network-handshaking) clients are worth caching outside production.
+  if (mock && process.env.NODE_ENV !== "production") return createClients(token);
+
+  const key = mock ? "mock" : token ?? "";
   if (!cache || cache.key !== key) {
     cache = { key, clients: createClients(token) };
   }

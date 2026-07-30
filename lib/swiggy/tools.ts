@@ -38,8 +38,19 @@ function enabledServers(): SwiggyServer[] {
 
 let cached: LoadedTools | null = null;
 
+/**
+ * Caching the inventory for the process lifetime is right in production and wrong
+ * in dev. Editing the mock registry hot-reloads that module but leaves this cache
+ * holding the previous tool set, while the system prompt — imported directly by
+ * the route — does reload. The prompt then steers the model at a tool the list no
+ * longer offers, the loop rejects it as unknown, and after two strikes gives up
+ * and reports a missing capability. The bug reads as "Dineout is broken" when
+ * nothing but the cache is stale.
+ */
+const CACHE_TOOLS = process.env.NODE_ENV === "production";
+
 export async function loadAllGroqTools(clients: SwiggyMCPClients): Promise<LoadedTools> {
-  if (cached) return cached;
+  if (CACHE_TOOLS && cached) return cached;
 
   const tools: ChatCompletionTool[] = [];
   const toolServerMap = new Map<string, SwiggyServer>();
@@ -57,8 +68,9 @@ export async function loadAllGroqTools(clients: SwiggyMCPClients): Promise<Loade
     }
   }
 
-  cached = { tools, toolServerMap };
-  return cached;
+  const loaded = { tools, toolServerMap };
+  if (CACHE_TOOLS) cached = loaded;
+  return loaded;
 }
 
 export function clearToolCache() {
