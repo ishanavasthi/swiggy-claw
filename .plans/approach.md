@@ -66,8 +66,18 @@ in text instead of burning every round on the same failure.
 
 **Two models in the client store, on purpose.** A `timeline` that preserves the
 text → tool → text interleaving of one agent turn (what the UI draws), and a flat `messages`
-history of finalized text turns (what gets POSTed back). Trying to serve both from one array
-means either the UI loses tool placement or the API history carries dangling tool calls.
+history of one entry per turn (what gets POSTed back). Trying to serve both from one array
+means the UI loses tool placement.
+
+**History carries tool calls, not just text.** Each finalized turn records the tools it ran
+alongside its prose, and the server expands those records back into paired assistant/tool
+messages. Text alone is not enough state to continue on: a turn that resolved an `addressId`
+or built a cart leaves none of that in what it said, so the next request would start blind
+and re-derive it. Pairing is safe by construction — the `tool_calls` array and its results
+are emitted from one filtered list, so neither side can dangle — and call ids are re-scoped
+per turn because providers reuse them. Results from tools that snapshot mutable state (the
+cart tools) are superseded by their own later calls rather than replayed, since a stale cart
+in context invites the model to merge it with the live one.
 
 **Radix, not Base UI.** The generated frontend assumed Radix/shadcn conventions (`asChild`,
 `variant`, `size`) while the app's existing primitives were Base UI. Rewriting the generated

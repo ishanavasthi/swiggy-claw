@@ -2,6 +2,34 @@
 
 Running log, newest first.
 
+## 2026-07-30 — The agent forgot every tool it had ever called
+
+**What changed.** Turns now carry their tool calls, not just their text. The store records
+each turn's calls and results on the assistant `ChatMessage`; `buildHistoryFromMessages`
+expands them back into paired assistant/tool messages. Cart snapshots superseded by a later
+call to the same tool are replaced with a marker instead of replayed. The location rule in
+the system prompt no longer gates tools that take no location.
+
+**Why.** Reported as "Instamart is broken": asked for go-to grocery items, the agent listed
+addresses, asked which one, and then asked again, and again — finally claiming it had no tool
+to fetch Instamart items, which it plainly did. Nothing was wrong with Instamart. History was
+rebuilt as text only, so every request started blind. The agent re-resolved the address each
+turn, had nothing to bind a bare "yes" to, and eventually confabulated its way to denying a
+tool it had been handed. The prompt made it worse by requiring an address before
+`your_go_to_items`, which takes no arguments at all, so the very first turn stalled on a
+question it never needed to ask.
+
+**Gotcha.** Replaying tool results fixed the loop and immediately introduced a subtler bug:
+with the whole history visible, the agent added bread to a cart that `checkout` had already
+emptied and reported the old items plus the new one. An order confirmation stays true
+forever; a cart listing stops being true the moment anything touches it. Replaying both
+kinds the same way is what merged them.
+
+**Takeaway.** The symptom named a surface, the cause was in the transport. When an agent
+claims it cannot do something it has a tool for, suspect its context before its tools — that
+sentence is what confabulation looks like after a few turns of amnesia. And when adding
+memory, sort facts from snapshots: more context is only better if what is in it is still true.
+
 ## 2026-07-30 — Leaked model control tokens in tool names
 
 **What changed.** Tool names coming off the stream are now sanitized once fully accumulated
